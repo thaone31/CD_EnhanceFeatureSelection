@@ -4,6 +4,17 @@ from tensorflow.keras import layers, Model
 from sklearn.metrics import adjusted_rand_score, silhouette_score
 from sklearn.cluster import KMeans
 import networkx as nx
+import warnings
+warnings.filterwarnings('ignore')
+
+# Configure TensorFlow to avoid GPU issues and symbolic tensor problems
+tf.config.run_functions_eagerly(True)  # Enable eager execution
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Force CPU usage to avoid CUDA errors
+
+# Suppress TensorFlow warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+tf.get_logger().setLevel('ERROR')
 
 
 class OptimizedDifferentialEvolution:
@@ -242,14 +253,15 @@ def simple_autoencoder(X, output_dim=None, epochs=50):
         loss='mse'
     )
     
-    # Train with validation
+    # Train without validation to avoid symbolic tensor issues
     try:
+        batch_size = min(32, X_normalized.shape[0])
+        
         autoencoder.fit(
             X_normalized, X_normalized, 
             epochs=epochs, 
-            batch_size=min(32, X_normalized.shape[0]), 
-            verbose=0,
-            validation_split=0.1 if X_normalized.shape[0] > 10 else 0
+            batch_size=batch_size, 
+            verbose=0
         )
     except Exception as e:
         print(f"   ⚠️ Autoencoder training failed: {e}")
@@ -338,14 +350,13 @@ def simple_contrastive_learning(X, labels, epochs=50, temperature=0.5):
     # Convert labels to array
     labels_array = np.array(labels)
     
-    # Train with error handling
+    # Train without validation to avoid issues
     try:
         model.fit(
             X_normalized, labels_array, 
             epochs=epochs, 
             batch_size=min(16, X_normalized.shape[0]),  # Smaller batch size
-            verbose=0,
-            validation_split=0.1 if X_normalized.shape[0] > 10 else 0
+            verbose=0
         )
     except Exception as e:
         print(f"   ⚠️ Contrastive learning failed: {e}")
