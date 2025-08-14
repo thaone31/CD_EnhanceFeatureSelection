@@ -207,7 +207,7 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
                     ae_embedding,
                     ground_truth,
                     epochs=max_epochs,
-                    temperature=0.1
+                    temperature=0.5  # Increased temperature to prevent overflow
                 )
             else:
                 embedding = ae_embedding
@@ -258,7 +258,8 @@ def run_clustering_evaluation(embedding, G, ground_truth, method_name):
                     'Modularity': metrics['modularity'],
                     'Silhouette': silhouette,
                     'Conductance': metrics['conductance'],
-                    'Coverage': metrics['coverage']
+                    'Coverage': metrics['coverage'],
+                    'Run_Time': 0  # Will be added later
                 })
             else:
                 # No ground truth - only calculate graph-based metrics
@@ -273,7 +274,8 @@ def run_clustering_evaluation(embedding, G, ground_truth, method_name):
                     'Modularity': metrics,
                     'Silhouette': silhouette,
                     'Conductance': calculate_conductance(G, predicted_labels),
-                    'Coverage': calculate_coverage(G, predicted_labels)
+                    'Coverage': calculate_coverage(G, predicted_labels),
+                    'Run_Time': 0  # Will be added later
                 })
                 
         except Exception as e:
@@ -367,15 +369,22 @@ def run_benchmark():
                 # Run clustering evaluation
                 method_results = run_clustering_evaluation(embedding, G, ground_truth, method_name)
                 
-                # Add run number to results
+                # Add run number and duration to results
                 for result in method_results:
                     result['Run'] = run + 1
                     result['Dataset'] = dataset_name
                     result['Duration'] = duration
+                    result['Run_Time'] = duration  # For table display
                 
                 all_results.extend(method_results)
             else:
                 print(f"    ❌ {method_name} failed")
+        
+        # Display results table after each run
+        if run == 0 or (run + 1) % 1 == 0:  # Show after each run
+            print(f"\n📊 RESULTS AFTER RUN {run + 1}/{n_runs}")
+            print("=" * 90)
+            display_current_run_results(all_results, dataset_name, run + 1)
     
     # Create results DataFrame
     if all_results:
@@ -453,8 +462,138 @@ def run_benchmark():
         print(f"   Methods tested: {len(methods)}")
         print(f"   Results saved to CSV files")
         
+        # Display final comprehensive results table
+        print(f"\n📈 FINAL COMPREHENSIVE RESULTS")
+        print("=" * 100)
+        display_results_table(all_results, dataset_name, partial=False)
+        
     else:
         print(f"\n❌ No results generated. Check for errors in methods.")
+
+
+def display_current_run_results(all_results, dataset_name, current_run):
+    """Display results for current run only"""
+    if not all_results:
+        return
+    
+    import pandas as pd
+    df = pd.DataFrame(all_results)
+    
+    # Get results for current run only
+    current_run_data = df[df['Run'] == current_run]
+    
+    if len(current_run_data) == 0:
+        return
+    
+    print(f"📋 Run {current_run} Individual Results:")
+    print(f"{'Method':<25} {'Clustering':<15} {'ARI':<8} {'NMI':<8} {'Modularity':<10} {'Time(s)':<8}")
+    print("-" * 75)
+    
+    # Sort by ARI descending
+    current_run_data = current_run_data.sort_values('ARI', ascending=False)
+    
+    for _, row in current_run_data.iterrows():
+        print(f"{row['Method']:<25} {row['Clustering']:<15} {row['ARI']:<8.4f} {row['NMI']:<8.4f} {row['Modularity']:<10.4f} {row['Run_Time']:<8.2f}")
+    
+    # Show best performer of this run
+    if len(current_run_data) > 0:
+        best_row = current_run_data.iloc[0]
+        print(f"\n🏆 Best in Run {current_run}: {best_row['Method']} ({best_row['Clustering']})")
+        print(f"   ARI: {best_row['ARI']:.4f}, NMI: {best_row['NMI']:.4f}, Time: {best_row['Run_Time']:.2f}s")
+
+
+def display_results_table(all_results, dataset_name, partial=False):
+    """Display formatted results table"""
+    if not all_results:
+        return
+    
+    import pandas as pd
+    df = pd.DataFrame(all_results)
+    
+    # Calculate summary statistics
+    summary_stats = []
+    methods = df['Method'].unique()
+    clustering_methods = df['Clustering'].unique()
+    
+    for method in methods:
+        for clustering in clustering_methods:
+            method_data = df[(df['Method'] == method) & (df['Clustering'] == clustering)]
+            
+            if len(method_data) > 0:
+                stats = {}
+                stats['Method'] = method
+                stats['Clustering'] = clustering
+                stats['Runs'] = len(method_data)
+                
+                # Calculate mean ± std for key metrics
+                for metric in ['ARI', 'NMI', 'Modularity', 'Silhouette']:
+                    if metric in method_data.columns:
+                        values = method_data[metric].values
+                        if len(values) > 0:
+                            mean_val = np.mean(values)
+                            std_val = np.std(values) if len(values) > 1 else 0.0
+                            stats[metric] = f"{mean_val:.4f}±{std_val:.3f}"
+                        else:
+                            stats[metric] = "N/A"
+                    else:
+                        stats[metric] = "N/A"
+                
+                # Add average runtime
+                if 'Run_Time' in method_data.columns:
+                    avg_time = np.mean(method_data['Run_Time'].values)
+                    stats['Avg_Time'] = f"{avg_time:.2f}s"
+                else:
+                    stats['Avg_Time'] = "N/A"
+                
+                summary_stats.append(stats)
+    
+    if summary_stats:
+        summary_df = pd.DataFrame(summary_stats)
+        
+        # Sort by ARI performance
+        try:
+            summary_df['ARI_numeric'] = summary_df['ARI'].str.split('±').str[0].astype(float)
+            summary_df = summary_df.sort_values('ARI_numeric', ascending=False)
+            summary_df = summary_df.drop('ARI_numeric', axis=1)
+        except:
+            pass
+        
+        print(f"\n{'Method':<25} {'Clustering':<15} {'Runs':<5} {'ARI':<12} {'NMI':<12} {'Modularity':<12} {'Avg_Time':<10}")
+        print("-" * 110)
+        
+        for _, row in summary_df.head(15).iterrows():  # Show top 15
+            print(f"{row['Method']:<25} {row['Clustering']:<15} {row['Runs']:<5} {row['ARI']:<12} {row['NMI']:<12} {row['Modularity']:<12} {row['Avg_Time']:<10}")
+        
+        # Show top performer
+        if len(summary_df) > 0:
+            best_row = summary_df.iloc[0]
+            print(f"\n🏆 OVERALL BEST: {best_row['Method']} ({best_row['Clustering']})")
+            print(f"   ARI: {best_row['ARI']}, NMI: {best_row['NMI']}, Avg Time: {best_row['Avg_Time']}")
+            
+            if not partial:
+                print(f"\n📊 FINAL PERFORMANCE RANKING:")
+                for i, (_, row) in enumerate(summary_df.head(5).iterrows(), 1):
+                    rank_emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"][i-1] if i <= 5 else f"{i}."
+                    print(f"   {rank_emoji} {row['Method']} ({row['Clustering']}) - ARI: {row['ARI']} (Time: {row['Avg_Time']})")
+                
+                # Performance insights
+                print(f"\n💡 PERFORMANCE INSIGHTS:")
+                
+                # Fastest method
+                try:
+                    summary_df['Time_numeric'] = summary_df['Avg_Time'].str.replace('s', '').astype(float)
+                    fastest = summary_df.loc[summary_df['Time_numeric'].idxmin()]
+                    print(f"   ⚡ Fastest: {fastest['Method']} ({fastest['Clustering']}) - {fastest['Avg_Time']}")
+                except:
+                    pass
+                
+                # Most stable (lowest std)
+                try:
+                    summary_df['ARI_std'] = summary_df['ARI'].str.split('±').str[1].astype(float)
+                    most_stable = summary_df.loc[summary_df['ARI_std'].idxmin()]
+                    print(f"   🎯 Most Stable: {most_stable['Method']} ({most_stable['Clustering']}) - {most_stable['ARI']}")
+                except:
+                    pass
 
 
 if __name__ == "__main__":

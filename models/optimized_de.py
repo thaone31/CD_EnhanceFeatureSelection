@@ -213,26 +213,52 @@ def simple_autoencoder(X, output_dim=None, epochs=50):
     if output_dim is None:
         output_dim = max(8, X.shape[1] // 2)
     
+    # ⭐ Normalize input data to prevent NaN
+    X_normalized = X.copy()
+    X_mean = np.mean(X_normalized, axis=0, keepdims=True)
+    X_std = np.std(X_normalized, axis=0, keepdims=True) + 1e-8  # Add epsilon to prevent division by zero
+    X_normalized = (X_normalized - X_mean) / X_std
+    
+    # Clip extreme values
+    X_normalized = np.clip(X_normalized, -5, 5)
+    
     # Build autoencoder
-    input_dim = X.shape[1]
+    input_dim = X_normalized.shape[1]
     
     # Encoder
     input_layer = tf.keras.Input(shape=(input_dim,))
-    encoded = layers.Dense(output_dim, activation='relu')(input_layer)
+    encoded = layers.Dense(output_dim, activation='relu', kernel_initializer='he_normal')(input_layer)
     
     # Decoder
-    decoded = layers.Dense(input_dim, activation='sigmoid')(encoded)
+    decoded = layers.Dense(input_dim, activation='linear', kernel_initializer='he_normal')(encoded)  # Changed to linear
     
     # Models
     autoencoder = Model(input_layer, decoded)
     encoder = Model(input_layer, encoded)
     
-    # Compile and train
-    autoencoder.compile(optimizer='adam', loss='mse')
-    autoencoder.fit(X, X, epochs=epochs, batch_size=32, verbose=0)
+    # Compile with gradient clipping
+    autoencoder.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+        loss='mse'
+    )
+    
+    # Train with validation
+    try:
+        autoencoder.fit(
+            X_normalized, X_normalized, 
+            epochs=epochs, 
+            batch_size=min(32, X_normalized.shape[0]), 
+            verbose=0,
+            validation_split=0.1 if X_normalized.shape[0] > 10 else 0
+        )
+    except Exception as e:
+        print(f"   ⚠️ Autoencoder training failed: {e}")
+        # Return original data if training fails
+        tf.keras.backend.clear_session()
+        return X
     
     # Return encoded features
-    encoded_features = encoder.predict(X, verbose=0)
+    encoded_features = encoder.predict(X_normalized, verbose=0)
     
     # Clear session to prevent memory leaks
     tf.keras.backend.clear_session()
@@ -240,7 +266,7 @@ def simple_autoencoder(X, output_dim=None, epochs=50):
     return encoded_features
 
 
-def simple_contrastive_learning(X, labels, epochs=50, temperature=0.1):
+def simple_contrastive_learning(X, labels, epochs=50, temperature=0.5):
     """
     Simple contrastive learning enhancement
     
@@ -248,7 +274,7 @@ def simple_contrastive_learning(X, labels, epochs=50, temperature=0.1):
         X: Input features
         labels: True labels for contrastive learning
         epochs: Training epochs
-        temperature: Temperature parameter
+        temperature: Temperature parameter (increased to prevent overflow)
         
     Returns:
         Enhanced features
@@ -256,20 +282,30 @@ def simple_contrastive_learning(X, labels, epochs=50, temperature=0.1):
     n_features = X.shape[1]
     n_classes = len(np.unique(labels))
     
+    # ⭐ Normalize input data
+    X_normalized = X.copy()
+    X_mean = np.mean(X_normalized, axis=0, keepdims=True)
+    X_std = np.std(X_normalized, axis=0, keepdims=True) + 1e-8
+    X_normalized = (X_normalized - X_mean) / X_std
+    X_normalized = np.clip(X_normalized, -3, 3)  # Clip to reasonable range
+    
     # Build projection network
     input_layer = tf.keras.Input(shape=(n_features,))
-    projected = layers.Dense(n_features, activation='relu')(input_layer)
-    projected = layers.Dense(n_features, activation=None)(projected)  # No activation for projection
+    projected = layers.Dense(n_features, activation='relu', kernel_initializer='he_normal')(input_layer)
+    projected = layers.Dense(n_features, activation=None, kernel_initializer='he_normal')(projected)  # No activation for projection
     
     model = Model(input_layer, projected)
     
-    # Custom contrastive loss
-    def contrastive_loss(y_true, y_pred):
-        # Normalize features
-        y_pred = tf.nn.l2_normalize(y_pred, axis=1)
+    # Improved contrastive loss with numerical stability
+    def stable_contrastive_loss(y_true, y_pred):
+        # Normalize features with epsilon for stability
+        y_pred = tf.nn.l2_normalize(y_pred, axis=1, epsilon=1e-8)
         
         # Compute similarity matrix
         similarity_matrix = tf.matmul(y_pred, y_pred, transpose_b=True) / temperature
+        
+        # Clip to prevent overflow
+        similarity_matrix = tf.clip_by_value(similarity_matrix, -10, 10)
         
         # Create mask for positive pairs
         labels_equal = tf.equal(tf.expand_dims(y_true, 0), tf.expand_dims(y_true, 1))
@@ -280,25 +316,50 @@ def simple_contrastive_learning(X, labels, epochs=50, temperature=0.1):
         mask = tf.ones_like(similarity_matrix) - tf.eye(batch_size)
         labels_equal = labels_equal * mask
         
-        # Compute loss
+        # Compute loss with numerical stability
         exp_sim = tf.exp(similarity_matrix) * mask
-        log_prob = similarity_matrix - tf.math.log(tf.reduce_sum(exp_sim, axis=1, keepdims=True))
+        log_prob = similarity_matrix - tf.math.log(tf.reduce_sum(exp_sim, axis=1, keepdims=True) + 1e-8)
         
         # Mean over positive pairs
-        positive_pairs = tf.reduce_sum(labels_equal)
-        loss = -tf.reduce_sum(labels_equal * log_prob) / (positive_pairs + 1e-8)
+        positive_pairs = tf.reduce_sum(labels_equal) + 1e-8
+        loss = -tf.reduce_sum(labels_equal * log_prob) / positive_pairs
+        
+        # Check for NaN and return safe value
+        loss = tf.where(tf.math.is_nan(loss), tf.constant(1.0), loss)
         
         return loss
     
-    # Compile and train
-    model.compile(optimizer='adam', loss=contrastive_loss)
+    # Compile with gradient clipping
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001, clipnorm=1.0),
+        loss=stable_contrastive_loss
+    )
     
-    # Convert labels to categorical for training
+    # Convert labels to array
     labels_array = np.array(labels)
-    model.fit(X, labels_array, epochs=epochs, batch_size=32, verbose=0)
+    
+    # Train with error handling
+    try:
+        model.fit(
+            X_normalized, labels_array, 
+            epochs=epochs, 
+            batch_size=min(16, X_normalized.shape[0]),  # Smaller batch size
+            verbose=0,
+            validation_split=0.1 if X_normalized.shape[0] > 10 else 0
+        )
+    except Exception as e:
+        print(f"   ⚠️ Contrastive learning failed: {e}")
+        # Return original data if training fails
+        tf.keras.backend.clear_session()
+        return X
     
     # Get enhanced features
-    enhanced_features = model.predict(X, verbose=0)
+    try:
+        enhanced_features = model.predict(X_normalized, verbose=0)
+    except Exception as e:
+        print(f"   ⚠️ Prediction failed: {e}")
+        tf.keras.backend.clear_session()
+        return X
     
     # Clear session
     tf.keras.backend.clear_session()
