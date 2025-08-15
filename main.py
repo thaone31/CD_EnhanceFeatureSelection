@@ -10,9 +10,9 @@ Contrastive Embedding) and optimized Differential Evolution approaches.
 Methods compared:
 - DeepWalk (baseline)
 - Node2Vec
-- DWACE (DeepWalk + Autoencoder + Contrastive)
+- DWACE Paper (Full Paper Implementation with proper architecture)
 - Optimized DE (DeepWalk + DE feature selection)
-- Optimized DE Full (DeepWalk + DE + Autoencoder + Contrastive)
+- Optimized DE Full (DE + DWACE Simplified Pipeline)
 
 Author: Enhanced Community Detection Pipeline
 """
@@ -32,6 +32,8 @@ warnings.filterwarnings('ignore')
 from datasets.loaders import load_karate, load_football, load_dolphins, load_email, load_facebook
 from models.feature_utils import deepwalk_embedding, node2vec_embedding
 from models.dwace_de import dwace_de_pipeline
+from models.dwace_paper_implementation import dwace_paper_pipeline  # ✅ New paper implementation
+from models.dwace_simplified import dwace_simplified_pipeline  # ✅ New simplified implementation
 from models.optimized_de import OptimizedDifferentialEvolution, simple_autoencoder, simple_contrastive_learning
 from evaluate import find_best_k
 from clustering import cluster_all
@@ -152,7 +154,7 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             embedding = node2vec_embedding(G, dim=64, walk_length=30, num_walks=200)
             
         elif method_name == "dwace":
-            # DWACE: DeepWalk + Autoencoder + Contrastive Embedding
+            # DWACE: DeepWalk + Autoencoder + Contrastive Embedding (Original)
             embeddings_dict, _, _ = dwace_de_pipeline(
                 G, ground_truth, 
                 feature_dim=64,
@@ -160,6 +162,24 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             )
             # Use the final enhanced embedding
             embedding = embeddings_dict.get('contrastive', embeddings_dict.get('autoencoder', embeddings_dict['deepwalk']))
+            
+        elif method_name == "dwace_paper":
+            # DWACE: Paper Implementation (Correct Architecture)
+            embeddings_dict, enhancement_name = dwace_paper_pipeline(
+                G, ground_truth, 
+                feature_dim=64,
+                verbose=False
+            )
+            embedding = embeddings_dict[enhancement_name]
+            
+        elif method_name == "dwace_simplified":
+            # DWACE: Simplified Implementation (MSE Loss Only)
+            embeddings_dict, enhancement_name = dwace_simplified_pipeline(
+                G, ground_truth, 
+                feature_dim=64,
+                verbose=False
+            )
+            embedding = embeddings_dict[enhancement_name]
             
         elif method_name == "deepwalk_optimized_de":
             # DeepWalk + Optimized DE feature selection
@@ -178,10 +198,12 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             embedding = deepwalk_emb[:, selected_features]
             
         elif method_name == "deepwalk_optimized_de_full":
-            # DeepWalk + DE + Autoencoder + Contrastive (Full Pipeline)
+            # DeepWalk + DE + DWACE Simplified Pipeline (Full Optimized Pipeline)
+            print(f"    🔧 Step 1: DeepWalk embedding...")
             deepwalk_emb = deepwalk_embedding(G, dim=64, walk_length=30, num_walks=200)
             
-            # DE feature selection
+            print(f"    🧬 Step 2: DE feature selection...")
+            # DE feature selection first
             de_optimizer = OptimizedDifferentialEvolution(
                 population_size=8,
                 max_generations=max_epochs,
@@ -190,27 +212,23 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
                 max_features_ratio=0.8
             )
             
-            feature_mask, _, _ = de_optimizer.optimize(deepwalk_emb, G, ground_truth)
+            feature_mask, de_fitness, _ = de_optimizer.optimize(deepwalk_emb, G, ground_truth)
             selected_features = np.where(feature_mask)[0]
             de_embedding = deepwalk_emb[:, selected_features]
             
-            # Autoencoder
-            ae_embedding = simple_autoencoder(
-                de_embedding,
-                output_dim=min(32, len(selected_features)),
-                epochs=max_epochs
+            print(f"    ✓ DE selected {len(selected_features)}/{deepwalk_emb.shape[1]} features (fitness: {de_fitness:.4f})")
+            
+            print(f"    🏗️  Step 3: DWACE Simplified pipeline on DE-optimized features...")
+            # Apply DWACE simplified implementation to DE-optimized embedding
+            embeddings_dict, enhancement_name = dwace_simplified_pipeline(
+                G, ground_truth, 
+                initial_embedding=de_embedding,  # Use DE-optimized embedding as input
+                feature_dim=len(selected_features),
+                verbose=False
             )
             
-            # Contrastive learning
-            if ground_truth is not None and len(np.unique(ground_truth)) > 1:
-                embedding = simple_contrastive_learning(
-                    ae_embedding,
-                    ground_truth,
-                    epochs=max_epochs,
-                    temperature=0.5  # Increased temperature to prevent overflow
-                )
-            else:
-                embedding = ae_embedding
+            embedding = embeddings_dict[enhancement_name]
+            print(f"    ✓ Final embedding shape: {embedding.shape} (enhancement: {enhancement_name})")
                 
         else:
             raise ValueError(f"Unknown method: {method_name}")
@@ -228,7 +246,12 @@ def run_clustering_evaluation(embedding, G, ground_truth, method_name):
     if embedding is None:
         return []
     
-    n_clusters = len(np.unique(ground_truth)) if ground_truth is not None else find_best_k(embedding)
+    if ground_truth is not None:
+        n_clusters = len(np.unique(ground_truth))
+    else:
+        # find_best_k returns tuple, we need only the first element (best_k)
+        best_k_result = find_best_k(embedding, G)
+        n_clusters = best_k_result[0]  # Extract best_k from tuple
     clustering_methods = {
         'KMeans': KMeans(n_clusters=n_clusters, random_state=42, n_init=10),
         'Agglomerative': AgglomerativeClustering(n_clusters=n_clusters),
@@ -341,9 +364,9 @@ def run_benchmark():
     methods = [
         "deepwalk",
         "node2vec", 
-        "dwace",
+        "dwace_paper",  # ✅ DWACE Paper Implementation
         "deepwalk_optimized_de",
-        "deepwalk_optimized_de_full"
+        "deepwalk_optimized_de_full"  # ✅ DE + DWACE Simplified Pipeline
     ]
     
     print(f"\n🔬 Methods to compare:")

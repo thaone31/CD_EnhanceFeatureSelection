@@ -1,7 +1,23 @@
 import numpy as np
+import os
+# Suppress TensorFlow warnings and force CPU usage
+os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Force CPU usage to avoid CUDA errors
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # Suppress warnings
+
+import tensorflow as tf
+# Configure TensorFlow settings
+tf.config.run_functions_eagerly(True)  # Enable eager execution
+tf.get_logger().setLevel('ERROR')
+
+from tensorflow.keras import layers, Model
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
+from sklearn.cluster import KMeans
+import networkx as nx
+import warnings
+warnings.filterwarnings('ignore')
 import tensorflow as tf
 from tensorflow.keras import layers, Model
-from sklearn.metrics import adjusted_rand_score, silhouette_score
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
 from sklearn.cluster import KMeans
 import networkx as nx
 import warnings
@@ -56,20 +72,32 @@ class OptimizedDifferentialEvolution:
                 kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
                 predicted_labels = kmeans.fit_predict(selected_embeddings)
                 
-                # Primary metric: ARI
+                # Multi-objective metrics
                 ari_score = adjusted_rand_score(ground_truth, predicted_labels)
+                nmi_score = normalized_mutual_info_score(ground_truth, predicted_labels)
                 
-                # Secondary metric: Silhouette (for cluster quality)
+                # Calculate modularity even in supervised case
+                communities = {i: [] for i in range(n_clusters)}
+                for node, label in enumerate(predicted_labels):
+                    if label < n_clusters:  # Ensure valid cluster assignment
+                        communities[label].append(node)
+                
+                communities_list = [comm for comm in communities.values() if len(comm) > 0]
+                modularity = nx.community.modularity(G, communities_list) if len(communities_list) > 1 else 0.0
+                
+                # Silhouette score
                 if len(np.unique(predicted_labels)) > 1 and selected_embeddings.shape[0] > n_clusters:
                     silhouette = silhouette_score(selected_embeddings, predicted_labels)
                 else:
                     silhouette = 0.0
                 
-                # Combined fitness with efficiency bonus
+                # Multi-objective fitness function
                 n_selected = np.sum(features_subset)
-                efficiency_bonus = 1.0 - (n_selected / embeddings.shape[1]) * 0.1  # Small bonus for fewer features
+                efficiency_bonus = 1.0 - (n_selected / embeddings.shape[1]) * 0.1
                 
-                fitness = ari_score * 0.7 + silhouette * 0.2 + efficiency_bonus * 0.1
+                # ⭐ BALANCED FITNESS: ARI + NMI + Modularity + Silhouette
+                fitness = (ari_score * 0.35 + nmi_score * 0.35 + modularity * 0.2 + 
+                          silhouette * 0.05 + efficiency_bonus * 0.05)
                 return max(0.0, fitness)
             else:
                 # Unsupervised: use modularity + silhouette
