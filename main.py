@@ -509,14 +509,14 @@ def display_current_run_results(all_results, dataset_name, current_run):
         return
     
     print(f"📋 Run {current_run} Individual Results:")
-    print(f"{'Method':<25} {'Clustering':<15} {'ARI':<8} {'NMI':<8} {'Modularity':<10} {'Time(s)':<8}")
-    print("-" * 75)
+    print(f"{'Method':<25} {'Clustering':<15} {'ARI':<8} {'NMI':<8} {'Modularity':<10} {'Conductance':<12} {'Coverage':<10} {'Time(s)':<8}")
+    print("-" * 105)
     
     # Sort by ARI descending
     current_run_data = current_run_data.sort_values('ARI', ascending=False)
     
     for _, row in current_run_data.iterrows():
-        print(f"{row['Method']:<25} {row['Clustering']:<15} {row['ARI']:<8.4f} {row['NMI']:<8.4f} {row['Modularity']:<10.4f} {row['Run_Time']:<8.2f}")
+        print(f"{row['Method']:<25} {row['Clustering']:<15} {row['ARI']:<8.4f} {row['NMI']:<8.4f} {row['Modularity']:<10.4f} {row['Conductance']:<12.4f} {row['Coverage']:<10.4f} {row['Run_Time']:<8.2f}")
     
     # Show best performer of this run
     if len(current_run_data) > 0:
@@ -549,7 +549,7 @@ def display_results_table(all_results, dataset_name, partial=False):
                 stats['Runs'] = len(method_data)
                 
                 # Calculate mean ± std for key metrics
-                for metric in ['ARI', 'NMI', 'Modularity', 'Silhouette']:
+                for metric in ['ARI', 'NMI', 'Modularity', 'Silhouette', 'Conductance', 'Coverage']:
                     if metric in method_data.columns:
                         values = method_data[metric].values
                         if len(values) > 0:
@@ -581,11 +581,11 @@ def display_results_table(all_results, dataset_name, partial=False):
         except:
             pass
         
-        print(f"\n{'Method':<25} {'Clustering':<15} {'Runs':<5} {'ARI':<12} {'NMI':<12} {'Modularity':<12} {'Avg_Time':<10}")
-        print("-" * 110)
+        print(f"\n{'Method':<20} {'Clustering':<12} {'Runs':<4} {'ARI':<10} {'NMI':<10} {'Modularity':<10} {'Conductance':<11} {'Coverage':<9} {'Time':<8}")
+        print("-" * 120)
         
         for _, row in summary_df.head(15).iterrows():  # Show top 15
-            print(f"{row['Method']:<25} {row['Clustering']:<15} {row['Runs']:<5} {row['ARI']:<12} {row['NMI']:<12} {row['Modularity']:<12} {row['Avg_Time']:<10}")
+            print(f"{row['Method']:<20} {row['Clustering']:<12} {row['Runs']:<4} {row['ARI']:<10} {row['NMI']:<10} {row['Modularity']:<10} {row['Conductance']:<11} {row['Coverage']:<9} {row['Avg_Time']:<8}")
         
         # Show top performer
         if len(summary_df) > 0:
