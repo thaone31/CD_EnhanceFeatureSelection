@@ -12,7 +12,8 @@ Methods compared:
 - Node2Vec
 - DWACE Paper (Full Paper Implementation with proper architecture)
 - Optimized DE (DeepWalk + DE feature selection)
-- Optimized DE Full (DE + DWACE Simplified Pipeline)
+- Optimized DE Full (DE + DWACE Enhanced - With All Advanced Losses)
+- DWACE Enhanced (Enhanced implementation with all advanced losses)
 
 Author: Enhanced Community Detection Pipeline
 """
@@ -198,7 +199,7 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             embedding = deepwalk_emb[:, selected_features]
             
         elif method_name == "deepwalk_optimized_de_full":
-            # DeepWalk + DE + DWACE Simplified Pipeline (Full Optimized Pipeline)
+            # DeepWalk + DE + DWACE Enhanced Pipeline (Full Optimized Pipeline)
             print(f"    🔧 Step 1: DeepWalk embedding...")
             deepwalk_emb = deepwalk_embedding(G, dim=64, walk_length=30, num_walks=200)
             
@@ -218,9 +219,10 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             
             print(f"    ✓ DE selected {len(selected_features)}/{deepwalk_emb.shape[1]} features (fitness: {de_fitness:.4f})")
             
-            print(f"    🏗️  Step 3: DWACE Simplified pipeline on DE-optimized features...")
-            # Apply DWACE simplified implementation to DE-optimized embedding
-            embeddings_dict, enhancement_name = dwace_simplified_pipeline(
+            print(f"    🏗️  Step 3: DWACE Enhanced pipeline on DE-optimized features...")
+            # Apply DWACE enhanced implementation to DE-optimized embedding
+            from models.dwace_enhanced import dwace_enhanced_pipeline
+            embeddings_dict, enhancement_name = dwace_enhanced_pipeline(
                 G, ground_truth, 
                 initial_embedding=de_embedding,  # Use DE-optimized embedding as input
                 feature_dim=len(selected_features),
@@ -229,7 +231,17 @@ def run_method(method_name, G, ground_truth, max_epochs=20):
             
             embedding = embeddings_dict[enhancement_name]
             print(f"    ✓ Final embedding shape: {embedding.shape} (enhancement: {enhancement_name})")
-                
+        
+        elif method_name == "dwace_enhanced":
+            # DWACE: Enhanced Implementation with Neighborhood-preserving & Supervised Cross-entropy Losses
+            from models.dwace_enhanced import dwace_enhanced_pipeline
+            embeddings_dict, enhancement_name = dwace_enhanced_pipeline(
+                G, ground_truth, 
+                feature_dim=64,
+                verbose=False
+            )
+            embedding = embeddings_dict[enhancement_name]
+            
         else:
             raise ValueError(f"Unknown method: {method_name}")
         
@@ -366,7 +378,8 @@ def run_benchmark():
         "node2vec", 
         "dwace_paper",  # ✅ DWACE Paper Implementation
         "deepwalk_optimized_de",
-        "deepwalk_optimized_de_full"  # ✅ DE + DWACE Simplified Pipeline
+        "deepwalk_optimized_de_full",  # ✅ DE + DWACE Enhanced (All Advanced Losses)
+        "dwace_enhanced"  # Enhanced DWACE method
     ]
     
     print(f"\n🔬 Methods to compare:")
